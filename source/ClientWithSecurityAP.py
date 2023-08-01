@@ -95,6 +95,10 @@ def main(args):
                             public_key = private_key.public_key()
                         except Exception as e:
                             print(e)
+                            print("Invalid signature.")
+                            print("Closing connection...")
+                            s.sendall(convert_int_to_bytes(2))
+                            break
                         try:
                             public_key.verify(secondMessage,messageBytes,padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
                                             salt_length=padding.PSS.MAX_LENGTH,),hashes.SHA256(),)
