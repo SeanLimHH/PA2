@@ -48,7 +48,7 @@ def main(args):
     port = int(args[0]) if len(args) > 0 else 4321
     address = args[1] if len(args) > 1 else "localhost"
     usedNonces = set()
-    
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((address, port))
@@ -62,9 +62,11 @@ def main(args):
                             # If the packet is for transferring the filename
                             print("Receiving file...")
                             filename_len = convert_bytes_to_int(
-                                read_bytes(client_socket, 8))
+                                read_bytes(client_socket, 8)
+                            )
                             filename = read_bytes(
-                                client_socket, filename_len).decode("utf-8")
+                                client_socket, filename_len
+                            ).decode("utf-8")
                             # print(filename)
                         case 1:
                             # If the packet is for transferring a chunk of the file
@@ -93,41 +95,13 @@ def main(args):
                             s.close()
                             break
                         
-                        case 3: #* 8 bytes => 64 bits. First message should thus be 000...00101
-                            #* Client sends 3 messages, so we must process it one-by-one.
-                            #* First message just purely routes to this case; in a way; we can deal with the subsequent 2 messages:
-                            #* Second message from client is the size of (message to be privately signed by csertificate) in bytes
+                        case 3:
+                            #* Here we implement the AP
                             
-                            #* With these two messages (second and third), server must return 4 messages:
-                            #* 1. Size of the next message in bytes
-                            #* 2. Server-authenticated of the message
-                            #* 3. Signature for 1.; signed by the server
-                            #* 4. Signature for 2.; signed by the server
-                            
-                            #* So my solution is to:
-                            #* a. Using client's second message, we have to reserve X amount of bytes;
-                            #*    determined by the size for the next recv. This is done by the read_bytes() above.
-                            #* b. The reserved amount of bytes is then interpreted as the message to be authenticated by the server; 
-                            #*    sent by client. This is done by the read_bytes() above.
-                            #* c. We will therefore extract b. out via the bytes reserved. 
-                            #* d. Since this is the server, server-authenticate this message.
-                            #*    This is server response second message.
-                            #* e. Compute the authenticated message's size in bytes.
-                            #*    This is server response first message.
-                            #*    We need to know the size of the authenticated message to send back to client.
-                            #* f. Using the private key server_private_key.pem, sign the authenticated message.
-                            #*    This is server response third message.
-                            #* g. Compute f's size in bytes.
-                            #*    This is server response fourth message.
-                            
-                            print('MODE 3 sent by client. AP protocol initiated.')
-                            
-                            messageByteSize = convert_bytes_to_int(read_bytes(client_socket, 8))
-                            print("From client, expect the next message to have byte size of:", messageByteSize)
-                           
-                            #* Third message from client is the actual (message to be privately signed by csertificate)
-                            message = read_bytes(client_socket, messageByteSize)
-                            print("message with nonce prepended:",message)
+                            #* This is the length of the next message to be received:
+                            lengthOfMessage = convert_bytes_to_int(read_bytes(client_socket, 8))
+                            #* This is the message to sign:
+                            message = read_bytes(client_socket, lengthOfMessage)
                             nonce = message[:8]
                             if nonce in usedNonces:
                                 print("Nonce was used before!")
@@ -137,53 +111,44 @@ def main(args):
                             else:
                                 usedNonces.add(nonce)
                             
-                            print("Used nonces:", usedNonces)
+                            try:
+                                with open("auth/server_private_key.pem", mode="r", encoding="utf8") as key_file:
+                                    private_key = serialization.load_pem_private_key(
+                                        bytes(key_file.read(), encoding="utf8"), password=None)
+                            except Exception as e:
+                                print(e)
+
+                            #* print('Length of message:',lengthOfMessage)
+                            #* print('Message:',message)
+                            #* print('Nonce:', nonce)
                             
-                            print("From client, this message is:", message)
-                            with open("./auth/_private_key.pem", "rb") as key_file: #* https://cryptography.io/en/latest/hazmat/primitives/asymmetric/rsa/
-                                private_key = serialization.load_pem_private_key(
-                                    key_file.read(),
-                                    password=None)
+                            # Use private_key or public_key for encryption or decryption from now onwards
+                    
+                            signedMessage = private_key.sign(
+                                    message, # message in bytes format
+                                    padding.PSS(
+                                        mgf=padding.MGF1(hashes.SHA256()),
+                                        salt_length=padding.PSS.MAX_LENGTH,),
+                                    hashes.SHA256())
+                            lengthOfSignedMessage = convert_int_to_bytes(len(signedMessage))
                                 
-                            serverAuthenticatedMessage = private_key.sign( #* https://cryptography.io/en/latest/hazmat/primitives/asymmetric/rsa/
-                                message,
-                                padding.PSS(
-                                    mgf=padding.MGF1(hashes.SHA256()),
-                                    salt_length=padding.PSS.MAX_LENGTH
-                                ),
-                                hashes.SHA256())
+                            with open("auth/server_signed.crt", "rb") as f:
+                                serverSignedCertificate = f.read()
+                            lengthOfServerSignedCertificate = convert_int_to_bytes(len(serverSignedCertificate))
                             
-                            print('Server authenticated message:', serverAuthenticatedMessage)
-                            serverAuthenticatedMessageLength = len(serverAuthenticatedMessage)
-                            print('Length of server authenticated message:', serverAuthenticatedMessageLength)
+                            #* print('Length signed message', lengthOfSignedMessage)
+                            #* print('Signed message', signedMessage)
+                            #* print('serverSignedCertificate:', serverSignedCertificate)
+                            #* print('Length of server signed certificate:',lengthOfServerSignedCertificate)
+                            #* print('Server signed certificate:',serverSignedCertificate)
+                            client_socket.sendall(lengthOfSignedMessage)
+                            client_socket.sendall(signedMessage)
+                            client_socket.sendall(lengthOfServerSignedCertificate)
+                            client_socket.sendall(serverSignedCertificate)
                             
-                            with open("./auth/server_signed.crt", "rb") as fp:
-                                fileData = fp.read()
-                                
-                            '''
-                            print(convert_int_to_bytes(serverAuthenticatedMessageLength))
-                            print(type(convert_int_to_bytes(serverAuthenticatedMessageLength)))
-                            print(serverAuthenticatedMessage)
-                            print(type(serverAuthenticatedMessage))
-                            
-                            print(convert_int_to_bytes(len(fileData)))
-                            print(type(convert_int_to_bytes(len(fileData))))
-                            print(fileData)
-                            print(type(fileData))
-                            '''
-                            
-                            client_socket.sendall(convert_int_to_bytes(serverAuthenticatedMessageLength))
-                            print('First send passed')
-                            client_socket.sendall(serverAuthenticatedMessage)
-                            print('Second send passed')
-                            client_socket.sendall(convert_int_to_bytes(len(fileData)))
-                            print('Third send passed')
-                            client_socket.sendall(fileData)
-                            print('Fourth send passed')
-                        
-                            print("Note: I used a nonce to prevent replay attacks, this is the second requirement: to ensure that i am talking to a live server.")
-                            print("The nonce is generated and prepended in my client message. This nonce is randomly generated and then the server will check if it is used before.")
-                            print("An attack will thus be unable to proceed if the same nonce is used, since the server side rejects if the nonce was used before.")
+                            #* Note: I used a nonce to prevent replay attacks, this is the second requirement: to ensure that i am talking to a live server.
+                            #* The nonce is generated and prepended in my client message. This nonce is randomly generated and then the server will check if it is used before.
+                            #* An attack will thus be unable to proceed if the same nonce is used, since the server side rejects if the nonce was used before.
                     
     except Exception as e:
         print(e)
