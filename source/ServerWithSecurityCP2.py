@@ -48,7 +48,7 @@ def main(args):
     port = int(args[0]) if len(args) > 0 else 4321
     address = args[1] if len(args) > 1 else "localhost"
     usedNonces = set()
-
+    decryptedSessionKey = None
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind((address, port))
@@ -74,20 +74,30 @@ def main(args):
 
                             file_len = convert_bytes_to_int(
                                 read_bytes(client_socket, 8)
-                            )
-                            file_data = read_bytes(client_socket, file_len)
-                            # print(file_data)
-
+                            )                            
+                            try:
+                                with open("auth/server_private_key.pem", mode="r", encoding="utf8") as key_file:
+                                    private_key = serialization.load_pem_private_key(
+                                        bytes(key_file.read(), encoding="utf8"), password=None)
+                            except Exception as e:
+                                print(e)
+                                
+                            #* CP 2 Here: Decrypt using private_key.
+                            
+                            totalDecryptedBytesReceived = 0
                             filename = "recv_" + filename.split("/")[-1]
+                            with open(f'recv_files_enc/enc_{filename}', mode = 'wb') as beforeDecryptionFile:
+                                with open(f"recv_files/{filename}", mode="wb") as fp:
+                                    encryptedData = read_bytes(client_socket, file_len)
+                                    beforeDecryptionFile.write(encryptedData)
+                                    
+                                    decryptedData = decryptedSessionKey.decrypt(encryptedData)
+                                    totalDecryptedBytesReceived += len(decryptedData)
+                                    fp.write(decryptedData)
+                    
+                            #print(f'File length is {totalDecryptedBytesReceived}')
+                            print(f"Finished receiving file in {(time.time() - start_time)}s!")
 
-                            # Write the file with 'recv_' prefix
-                            with open(
-                                f"recv_files/{filename}", mode="wb"
-                            ) as fp:
-                                fp.write(file_data)
-                            print(
-                                f"Finished receiving file in {(time.time() - start_time)}s!"
-                            )
                         case 2:
                             # Close the connection
                             # Python context used here so no need to explicitly close the socket
@@ -111,7 +121,6 @@ def main(args):
                             else:
                                 usedNonces.add(nonce)
                             
-
                             try:
                                 with open("auth/server_private_key.pem", mode="r", encoding="utf8") as key_file:
                                     private_key = serialization.load_pem_private_key(
@@ -150,7 +159,30 @@ def main(args):
                             #* Note: I used a nonce to prevent replay attacks, this is the second requirement: to ensure that i am talking to a live server.
                             #* The nonce is generated and prepended in my client message. This nonce is randomly generated and then the server will check if it is used before.
                             #* An attack will thus be unable to proceed if the same nonce is used, since the server side rejects if the nonce was used before.
-    
+                        case 4:
+                            #* Here we implement CP 2 mode 4
+                            
+                            if not decryptedSessionKey:
+                                print('Receiving symmetric key...')
+                            #* This is the length of the next message to be received:
+                            lengthOfSessionKeyBytes = convert_bytes_to_int(read_bytes(client_socket, 8))
+                            
+                            #* This is the message to sign:
+                            encryptedSessionKeyBytes = read_bytes(client_socket, lengthOfSessionKeyBytes)
+                            decryptedSessionKeyBytes = private_key.decrypt(
+                                encryptedSessionKeyBytes, # in bytes
+                                padding.OAEP(      # padding should match whatever used during encryption
+                                    mgf=padding.MGF1(hashes.SHA256()),
+                                    algorithm=hashes.SHA256(),
+                                    label=None,
+                                ),
+                            )
+                            
+                            if not decryptedSessionKey:
+                                print('Key received!')
+                            #print('Decrypted session key in bytes:', decryptedSessionKeyBytes)
+                            decryptedSessionKey = Fernet(decryptedSessionKeyBytes)
+                            #print('Decrypted session key:', decryptedSessionKey)
     except Exception as e:
         print(e)
         s.close()

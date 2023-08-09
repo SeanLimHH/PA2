@@ -148,6 +148,28 @@ def main(args):
             #* The nonce is generated and prepended in my client message. This nonce is randomly generated and then the server will check if it is used before.
             #* An attack will thus be unable to proceed if the same nonce is used, since the server side rejects if the nonce was used before.
 
+
+            #* HERE IS MODE 4
+            session_key_bytes = Fernet.generate_key() # generates 128-bit symmetric key as bytes
+
+            s.sendall(convert_int_to_bytes(4)) #* SEND MODE 4
+            #* Because the task wants server to be the only want to decrypt it, we will encrypt it with server's public key
+            #* This is so that the server can decrypt it with its private key. And no one has access to its private key
+            
+            encryptedSessionKey = public_key.encrypt(
+                session_key_bytes,
+                padding.OAEP(
+                    mgf=padding.MGF1(hashes.SHA256()),
+                    algorithm=hashes.SHA256(),
+                    label=None,
+                ),
+            )
+            #print('Session key as bytes:', session_key_bytes)
+            #print('Encrypted Session Key:', encryptedSessionKey)
+            s.sendall(convert_int_to_bytes(len(encryptedSessionKey)))
+            s.sendall(encryptedSessionKey)
+            
+            
             filename = input(
                 "Enter a filename to send (enter -1 to exit):"
             ).strip()
@@ -167,12 +189,25 @@ def main(args):
             s.sendall(filename_bytes)
 
             # Send the file
-            with open(filename, mode="rb") as fp:
-                data = fp.read()
-                s.sendall(convert_int_to_bytes(1))
-                s.sendall(convert_int_to_bytes(len(data)))
-                s.sendall(data)
-
+                
+            s.sendall(convert_int_to_bytes(1))
+            #* The encryption of data here will be modified, now using the session key.
+            
+            #* Encryption of data and concatenating:
+            with open(filename, 'rb') as fileToSend:
+                dataToEncrypt = fileToSend.read()
+            
+            sessionKey = Fernet(session_key_bytes) # instantiate a Fernet instance with key
+            encryptedDataToSend = sessionKey.encrypt(dataToEncrypt)
+                    
+            encName = 'enc_' + filename.split("/")[-1]
+            encPathWithName = 'send_files_enc/' + encName
+            with open(encPathWithName, mode = 'wb') as beforeSendFile:
+                beforeSendFile.write(encryptedDataToSend)
+                
+            #* This is the length of the newly Fernet-encrypted data to send to server:
+            s.sendall(convert_int_to_bytes(len(encryptedDataToSend)))
+            s.sendall(encryptedDataToSend)
         # Close the connection
         s.sendall(convert_int_to_bytes(2))
         print("Closing connection...")

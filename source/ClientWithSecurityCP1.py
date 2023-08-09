@@ -167,12 +167,37 @@ def main(args):
             s.sendall(filename_bytes)
 
             # Send the file
-            with open(filename, mode="rb") as fp:
-                data = fp.read()
-                s.sendall(convert_int_to_bytes(1))
-                s.sendall(convert_int_to_bytes(len(data)))
-                s.sendall(data)
-
+                
+            s.sendall(convert_int_to_bytes(1))
+            #* Here will will do encryption of data. My choice is using public key. The reason is so that the decryption is using
+            #* the server's private key. I will also use PKCS1v15 to encrypt my data.
+            
+            #* The difficulty comes in telling the server when to stop receiving the data.
+            #* My method is to first inform the server to expect total of how many bytes to be received from the client.
+            #* Once the bytes received is matched, then it stops receiving from client.
+            
+            #* The approach i chose is to encrypt in chunks, concatenate, then send one-shot.
+            chunk_size = 117  # Maximum chunk size for PKCS1v15 padding with 1024-bit RSA key
+            
+            #* Encryption of data and concatenating:
+            encryptedDataToSend = b''
+            with open(filename, 'rb') as fileToSend:
+                while True:
+                    chunk = fileToSend.read(117) #* The idea is to read 117 bytes at a time
+                    if not chunk:
+                        break
+                    encryptedChunkOfData = public_key.encrypt(chunk, padding.PKCS1v15())
+                    #print('Length of encrypted chunk of data to be sent by the client:', len(encryptedChunkOfData))
+                    encryptedDataToSend += encryptedChunkOfData
+                    #print(encryptedDataToSend)
+                    
+            encName = 'enc_' + filename.split("/")[-1]
+            encPathWithName = 'send_files_enc/' + encName
+            with open(encPathWithName, mode = 'wb') as beforeSendFile:
+                beforeSendFile.write(encryptedDataToSend)
+            s.sendall(convert_int_to_bytes(len(encryptedDataToSend))) #* This is the modified M1 sent to server
+            
+            s.sendall(encryptedDataToSend)
         # Close the connection
         s.sendall(convert_int_to_bytes(2))
         print("Closing connection...")

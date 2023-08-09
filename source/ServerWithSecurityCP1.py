@@ -74,20 +74,36 @@ def main(args):
 
                             file_len = convert_bytes_to_int(
                                 read_bytes(client_socket, 8)
-                            )
-                            file_data = read_bytes(client_socket, file_len)
-                            # print(file_data)
-
+                            )                            
+                            try:
+                                with open("auth/server_private_key.pem", mode="r", encoding="utf8") as key_file:
+                                    private_key = serialization.load_pem_private_key(
+                                        bytes(key_file.read(), encoding="utf8"), password=None)
+                            except Exception as e:
+                                print(e)
+                                
+                            #* CP 2 Here: Decrypt using private_key.
+                            
+                            totalDecryptedBytesReceived = 0
+                            receivedBytes = 0
                             filename = "recv_" + filename.split("/")[-1]
+                            with open(f'recv_files_enc/enc_{filename}', mode = 'wb') as beforeDecryptionFile:
+                                with open(f"recv_files/{filename}", mode="wb") as fp:
+                                    while receivedBytes < file_len:
+                                        encryptedChunk = read_bytes(client_socket, 128)
+                                        receivedBytes += len(encryptedChunk)
+                                        beforeDecryptionFile.write(encryptedChunk)
+                                        decryptedChunk = private_key.decrypt(
+                                            encryptedChunk, # in bytes
+                                            padding.PKCS1v15())
+                                        #print('Encrypted chunk length:',len(encryptedChunk))
+                                        #print('Decrypted chunk:', decryptedChunk)
+                                        #print('Decrypted chunk length:', len(decryptedChunk))
+                                        fp.write(decryptedChunk)
+                                        totalDecryptedBytesReceived += len(decryptedChunk)
+                            print(f'File length is {totalDecryptedBytesReceived}')
+                            print(f"Finished receiving file in {(time.time() - start_time)}s!")
 
-                            # Write the file with 'recv_' prefix
-                            with open(
-                                f"recv_files/{filename}", mode="wb"
-                            ) as fp:
-                                fp.write(file_data)
-                            print(
-                                f"Finished receiving file in {(time.time() - start_time)}s!"
-                            )
                         case 2:
                             # Close the connection
                             # Python context used here so no need to explicitly close the socket
@@ -111,7 +127,6 @@ def main(args):
                             else:
                                 usedNonces.add(nonce)
                             
-
                             try:
                                 with open("auth/server_private_key.pem", mode="r", encoding="utf8") as key_file:
                                     private_key = serialization.load_pem_private_key(
@@ -150,7 +165,7 @@ def main(args):
                             #* Note: I used a nonce to prevent replay attacks, this is the second requirement: to ensure that i am talking to a live server.
                             #* The nonce is generated and prepended in my client message. This nonce is randomly generated and then the server will check if it is used before.
                             #* An attack will thus be unable to proceed if the same nonce is used, since the server side rejects if the nonce was used before.
-    
+
     except Exception as e:
         print(e)
         s.close()

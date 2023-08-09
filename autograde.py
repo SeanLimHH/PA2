@@ -65,8 +65,13 @@ for i in range(len(input_commands) - 1):
     # compare the sent file and the received file (unencrypted)
     filename = "./source/" + input_commands[i].strip()
     filename_recv = path_recv_files + "/recv_" + raw_filename
+
     command = f"diff {filename} {filename_recv} &> result_plain"
     os.system(command)
+    command = f"diff {filename} {filename_recv}"
+    with open("./result_plain", "w+") as f:
+        subprocess.run(command, cwd=".", stdout=f, stderr=f, shell=True)
+
 
     # compare encrypted sent file and encrypted received file
     filename_encrypted = "./source/send_files_enc/enc_" + raw_filename
@@ -77,6 +82,11 @@ for i in range(len(input_commands) - 1):
         f"diff {filename_encrypted} {filename_encrypted_recv} &> result_enc"
     )
     os.system(command)
+
+    command = f"diff {filename_encrypted} {filename_encrypted_recv}"
+
+    with open("./result_enc", "w+") as f:
+        subprocess.run(command, cwd=".", stdout=f, stderr=f, shell=True)
 
     with open("result_plain") as f:
         output = f.readlines()
